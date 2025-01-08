@@ -1,0 +1,260 @@
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClient.h>
+#include <ArduinoJson.h> 
+#include <Servo.h>
+
+
+const char* thingsBoardServer = "https://demo.thingsboard.io";
+const char* accessToken = "idmDf6Wd63y7psidlOnZ";
+
+//const char* ssid = "Dilan";         
+//const char* password = ""; 
+//const char* serverUrl = "http://192.168.1.12:8080/alarm-api/state"; 
+const char* serverUrl = "http://95.217.129.180:8080/alarm-api/state"; 
+const char* ssid = "Net_660133"; 
+const char* password = "ajla2024naki"; 
+
+
+
+#define GAS_SENSOR_PIN D4
+#define BUZZER_PIN D0
+#define IR_SENSOR_PIN D3
+#define BUTTON1_PIN D5
+#define BUTTON2_PIN D6
+#define OUTPUT1_PIN D7
+#define OUTPUT2_PIN D8
+
+#define GAS_THRESHOLD 500
+#define HEATING_SENSOR_PIN A0
+#define HEAT_TRESHOLD 250
+#define PULSE_DURATION 200  
+#define DEBOUNCE_DELAY 50 
+
+
+
+unsigned long lastHeatTriggerTime = 0;
+unsigned long lastGasTriggerTime = 0;
+unsigned long lastAlarmActivationTime = 0;
+const unsigned long debounceDelay = 10000; 
+const unsigned long alarmCooldown = 60000; 
+
+bool isBuzzerOn = false; 
+unsigned long lastBuzzerTriggerTime = 0; 
+const unsigned long buzzerCooldown = 60000; 
+
+const int TRIG_PIN = D1; 
+const int ECHO_PIN = D2; 
+
+const int SERVO_PIN = D3;
+
+Servo myServo;
+
+float duration_us, distance_cm;
+
+void sendTelemetry(const char* key, float value) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    WiFiClient client;
+
+    String url = String(thingsBoardServer) + "/api/v1/" + accessToken + "/telemetry";
+    http.begin(client, url);
+    http.addHeader("Content-Type", "application/json");
+
+    StaticJsonDocument<200> doc;
+    doc[key] = value;
+
+    String requestBody;
+    serializeJson(doc, requestBody);
+
+    int httpCode = http.POST(requestBody);
+    String payload = http.getString();
+
+    if (httpCode == HTTP_CODE_OK) {
+      Serial.println("Telemetry sent successfully: " + requestBody);
+    } else {
+      Serial.println("Failed to send telemetry.");
+      Serial.println("HTTP code: " + String(httpCode));
+      Serial.println("Response: " + payload);
+    }
+
+    http.end();
+  } else {
+    Serial.println("Error: Not connected to Wi-Fi");
+  }
+}
+
+void sendPostRequest(int value) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    WiFiClient client;
+
+    http.begin(client, serverUrl); 
+    http.addHeader("Content-Type", "application/json"); 
+
+    StaticJsonDocument<200> doc;
+    doc["createdDate"] = "2024-11-16T12:00:00"; // Replace with your timestamp
+    doc["value"] = value;
+
+    String requestBody;
+    serializeJson(doc, requestBody);
+
+    int httpCode = http.POST(requestBody); 
+
+    if (httpCode == HTTP_CODE_OK) {
+      String response = http.getString();
+      Serial.println("Response: " + response);
+    } else {
+      Serial.println("HTTP request failed with code: " + String(httpCode));
+    }
+
+    http.end(); 
+  } else {
+    Serial.println("Error: Not connected to Wi-Fi");
+  }
+}
+
+void detectAndAct() {
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  duration_us = pulseIn(ECHO_PIN, HIGH);
+
+  distance_cm = 0.017 * duration_us;
+  sendTelemetry("ultrasonic_senzor", distance_cm);
+
+  Serial.print("Distance: ");
+  Serial.print(distance_cm);
+  Serial.println(" cm");
+  sendTelemetry("servo_motor", 0);
+
+  if (distance_cm > 0 && distance_cm < 6) {
+    Serial.println("Obstacle detected within 6 cm! Spinning servo...");
+    delay(10000);
+    myServo.write(180);
+    sendTelemetry("servo_motor", 180);
+    delay(25000); // Wait for 2 seconds
+
+    myServo.write(0);
+    sendTelemetry("servo_motor", 0);
+
+  } else {
+    Serial.println("No obstacle within 6 cm.");
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("Connected to Wi-Fi");
+
+  pinMode(HEATING_SENSOR_PIN, INPUT);
+  pinMode(GAS_SENSOR_PIN, INPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(IR_SENSOR_PIN, INPUT);
+  pinMode(BUTTON1_PIN, INPUT_PULLUP);
+  pinMode(BUTTON2_PIN, INPUT_PULLUP);
+  pinMode(OUTPUT1_PIN, OUTPUT);
+  pinMode(OUTPUT2_PIN, OUTPUT);
+
+  myServo.attach(SERVO_PIN);
+  myServo.write(0); // Start at 0 degrees
+
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+}
+void handleButtonPress(int buttonPin, int outputPin) {
+  static unsigned long lastPressTime = 0;  
+  if (digitalRead(buttonPin) == LOW) {    
+    if (millis() - lastPressTime > DEBOUNCE_DELAY) {
+      triggerPulse(outputPin);
+      lastPressTime = millis();
+    }
+  }
+}
+
+void triggerPulse(int outputPin) {
+  digitalWrite(outputPin, HIGH);
+  digitalWrite(BUZZER_PIN, HIGH);
+
+  delay(PULSE_DURATION);  
+
+  digitalWrite(outputPin, LOW);
+  digitalWrite(BUZZER_PIN, LOW);
+}
+
+void loop() {
+  int heatSensorValue = analogRead(HEATING_SENSOR_PIN);
+  sendTelemetry("Heat_senzor", heatSensorValue);
+  sendTelemetry("Stepper_motor", 1);
+  if (heatSensorValue > HEAT_TRESHOLD) {
+      sendTelemetry("Stepper_motor", 0);
+  }
+  Serial.println("Heat Sensor Reading: " + String(heatSensorValue));
+
+  if (heatSensorValue > HEAT_TRESHOLD && !isBuzzerOn && (millis() - lastBuzzerTriggerTime > buzzerCooldown) && (millis() - lastHeatTriggerTime > debounceDelay)) {
+    Serial.println("Heat detected! Activating buzzer.");
+    triggerPulse(OUTPUT1_PIN);
+    digitalWrite(BUZZER_PIN, HIGH);
+    isBuzzerOn = true;
+    lastHeatTriggerTime = millis();
+    lastAlarmActivationTime = millis();
+
+    sendPostRequest(1); 
+  }
+
+  int gasSensorValue = analogRead(GAS_SENSOR_PIN);
+  Serial.println("Gas Sensor Reading: " + String(gasSensorValue));
+
+  if (gasSensorValue < GAS_THRESHOLD && !isBuzzerOn && (millis() - lastBuzzerTriggerTime > buzzerCooldown) && (millis() - lastGasTriggerTime > debounceDelay)) {
+    Serial.println("Gas detected! Activating buzzer.");
+    triggerPulse(OUTPUT1_PIN);
+    digitalWrite(BUZZER_PIN, HIGH);
+    isBuzzerOn = true;
+    lastGasTriggerTime = millis();
+    lastAlarmActivationTime = millis();
+    sendPostRequest(2); 
+  }
+
+  if (digitalRead(BUTTON1_PIN) == LOW && (millis() - lastAlarmActivationTime > alarmCooldown)) { 
+    Serial.println("Button 1 pressed! Activating buzzer and OUTPUT1.");
+    digitalWrite(BUZZER_PIN, HIGH);
+    digitalWrite(OUTPUT1_PIN, HIGH);
+    delay(500); // High pulse for 500 ms
+    digitalWrite(BUZZER_PIN, LOW);
+    digitalWrite(OUTPUT1_PIN, LOW);
+    lastAlarmActivationTime = millis();
+  }
+
+  if (digitalRead(BUTTON2_PIN) == LOW && isBuzzerOn) {
+    Serial.println("Button 2 pressed! Turning off buzzer.");
+    digitalWrite(BUZZER_PIN, LOW);
+    isBuzzerOn = false;
+    lastBuzzerTriggerTime = millis(); 
+    delay(500); 
+  }
+
+  if (!isBuzzerOn && (millis() - lastBuzzerTriggerTime > buzzerCooldown)) {
+    if (digitalRead(BUTTON2_PIN) == LOW) {
+      Serial.println("Button 2 pressed! Activating buzzer and OUTPUT2.");
+      digitalWrite(BUZZER_PIN, HIGH);
+      digitalWrite(OUTPUT2_PIN, HIGH);
+      delay(500); 
+      digitalWrite(BUZZER_PIN, LOW);
+      digitalWrite(OUTPUT2_PIN, LOW);
+      lastBuzzerTriggerTime = millis(); 
+    }
+  }
+
+  detectAndAct();
+ 
+  handleButtonPress(BUTTON1_PIN, OUTPUT1_PIN);
+  handleButtonPress(BUTTON2_PIN, OUTPUT2_PIN);
+  delay(100);
+}

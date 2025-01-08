@@ -1,0 +1,31 @@
+<div class="alarm-container" [attr.state]="state">
+  <header class="alarm-header">
+    <h1>
+      <ng-container [ngSwitch]="state">
+        <span *ngSwitchCase="0">Alarm System</span>
+        <span *ngSwitchCase="1">Alarm Activated</span>
+        <span *ngSwitchCase="2">Alarm Activated</span>
+        <span *ngSwitchCase="3">Robot Started</span>
+        <span *ngSwitchCase="4">Robot Stopped</span>
+      </ng-container>
+    </h1>
+  </header>
+  <main class="alarm-content">
+    <p>
+      <ng-container [ngSwitch]="state">
+        <span *ngSwitchCase="0">System is monitoring</span>
+        <span *ngSwitchCase="1">HEAT DETECTED</span>
+        <span *ngSwitchCase="2">GAS DETECTED</span>
+        <span *ngSwitchCase="3">Robot started to move</span>
+        <span *ngSwitchCase="4">Robot is ready for next product</span>
+      </ng-container>
+    </p>
+    <button
+      *ngIf="state === 1 || state === 2"
+      class="action-button"
+      (click)="turnOffAlarm()"
+    >
+      Turn Off Alarm
+    </button>
+  </main>
+</div>
